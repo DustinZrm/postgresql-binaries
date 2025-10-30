@@ -62,7 +62,6 @@ RUN major_version=$(echo "$POSTGRESQL_VERSION" | awk -F. '{print $1}') && \
       --with-libxml \
       --with-libxslt \
       $([ $major_version -ge 14 ] && echo "--with-lz4") \
-      --with-openssl \
       --with-pgport=5432 \
       $([ $major_version -ge 15 ] && echo "--with-python") \
       --with-readline \
