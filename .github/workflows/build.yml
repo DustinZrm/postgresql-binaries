@@ -21,7 +21,6 @@ jobs:
         id:
           - linux-arm64
           - linux-x64
-          - linux-x86
           - macos-arm64
           - macos-x64
           - windows-x64
@@ -45,11 +44,6 @@ jobs:
             platform: linux/amd64
             architecture: "Advanced Micro Devices X86-64"
 
-          - id: linux-x86
-            target: i686-unknown-linux-gnu
-            os: ubuntu-latest
-            platform: linux/386
-            architecture: "Intel 80386"
           #
           # MacOS
           #
@@ -83,23 +77,42 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      - name: Setup environment
+      - name: Get postgres version from tag
         run: |
-          version=$(echo "${{ github.ref_name }}" | grep '^[0-9]*.[0-9]*.[0-9]*$') || true
-
+          version=$(echo "${{ github.ref_name }}" | grep '^[0-9]*.[0-9]*.[0-9]*_[0-9]*.[0-9]*.[0-9]*$' | awk -F'[._]' '{print $1"."$2"."$3}') || true
           if [ -z "$version" ]; then
             # Set default version for non-release builds
-            version="18.0.0"
+            version="16.2.0"
           fi
+          echo "POSTGRESQL_VERSION=$version" | tee -a $GITHUB_ENV
 
+      - name: Get pgvector version from tag
+        run: |
+          version=$(echo "${{ github.ref_name }}" | grep '^[0-9]*.[0-9]*.[0-9]*_[0-9]*.[0-9]*.[0-9]*$' | awk -F'[._]' '{print $4"."$5"."$6}') || true
+          if [ -z "$version" ]; then
+            # Set default version for non-release builds
+            version="0.7.0"
+          fi
+          echo "PGVECTOR_VERSION=$version" | tee -a $GITHUB_ENV
+
+      - name: Get release verison
+        run: |
+          echo "RELEASE_VERSION=${POSTGRESQL_VERSION}_${PGVECTOR_VERSION}" | tee -a $GITHUB_ENV
+
+      - name: Setup environment
+        run: |
           root_directory="$(pwd)"
-          archive="postgresql-$version-${{ matrix.target }}"
-          install_directory="$root_directory/$archive"
+          postgresql_source_directory="${root_directory}/postgresql-src"
+          pgvector_source_directory="${root_directory}/pgvector-src"
+          archive="postgresql-${POSTGRESQL_VERSION}-${{ matrix.target }}"
+          install_directory="${root_directory}/${archive}"
 
+          echo "ROOT_DIRECTORY=$root_directory" | tee -a $GITHUB_ENV
+          echo "POSTGRESQL_SOURCE_DIRECTORY=$postgresql_source_directory" | tee -a $GITHUB_ENV
+          echo "PGVECTOR_SOURCE_DIRECTORY=$pgvector_source_directory" | tee -a $GITHUB_ENV
           echo "ARCHIVE=$archive" | tee -a $GITHUB_ENV
           echo "INSTALL_DIRECTORY=$install_directory" | tee -a $GITHUB_ENV
-          echo "ROOT_DIRECTORY=$root_directory" | tee -a $GITHUB_ENV
-          echo "VERSION=$version" | tee -a $GITHUB_ENV
+
 
       #
       # Linux Build
@@ -134,13 +147,17 @@ jobs:
       # MacOS Build
       #
 
-      - name: Checkout postgresql source code (MacOS)
+      - name: Checkout source code postgresql (MacOS)
         if: ${{ startsWith(matrix.id, 'macos-') }}
         run: |
-          source_directory="$ROOT_DIRECTORY/postgresql-src"
-          branch=$(echo "$VERSION" | awk -F. '{print "REL_"$1"_"$2}')
-          git clone --depth 1 --branch $branch -c advice.detachedHead=false https://git.postgresql.org/git/postgresql.git "$source_directory"
-          echo "SOURCE_DIRECTORY=$source_directory" | tee -a $GITHUB_ENV
+          branch=$(echo "${POSTGRESQL_VERSION}" | awk -F. '{print "REL_"$1"_"$2}')
+          git clone --depth 1 --branch $branch -c advice.detachedHead=false https://git.postgresql.org/git/postgresql.git "${POSTGRESQL_SOURCE_DIRECTORY}"
+
+      - name: Checkout source code pgvector (MacOS)
+        if: ${{ startsWith(matrix.id, 'macos-') }}
+        run: |
+          branch=$(echo "${PGVECTOR_VERSION}" | awk -F. '{print "v"$1"."$2"."$3}')
+          git clone --depth 1 --branch $branch -c advice.detachedHead=false https://github.com/pgvector/pgvector.git "${PGVECTOR_SOURCE_DIRECTORY}"
 
       - name: Configure build (MacOS)
         if: ${{ startsWith(matrix.id, 'macos-') }}
@@ -198,6 +215,17 @@ jobs:
 
           cp "$SOURCE_DIRECTORY/COPYRIGHT" "$INSTALL_DIRECTORY"
           cd "$ROOT_DIRECTORY"
+
+
+      - name: Build pgvector (MacOS)
+        if: ${{ startsWith(matrix.id, 'macos-') }}
+        run: |
+          cd "${PGVECTOR_SOURCE_DIRECTORY}"
+          
+          PG_CONFIG="${INSTALL_DIRECTORY}/bin/pg_config" make
+          PG_CONFIG="${INSTALL_DIRECTORY}/bin/pg_config" make install
+
+          cd "${ROOT_DIRECTORY}"
 
       # This allows the MacOS build to be relocated to a different directory
       - name: Update library paths (MacOS)
